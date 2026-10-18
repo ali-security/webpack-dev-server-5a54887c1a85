@@ -88,6 +88,7 @@ const listOfTests = {
   "proxy-web-socket-origin": 2,
   "allowed-origins": 2,
   "cli-allowed-origins": 1,
+  "static-deny": 1,
 };
 
 let startPort = 8089;
