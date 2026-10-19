@@ -570,7 +570,7 @@ declare class Server {
         configs: {
           /**
            * @private
-           * @type {RequestHandler[]}
+           * @type {(() => RequestHandler | undefined)[]}
            */
           type: string;
           multiple: boolean;
@@ -632,10 +632,6 @@ declare class Server {
               multiple: boolean;
               description: string;
               negatedDescription: string;
-              /**
-               * @param {"v4" | "v6"} family
-               * @returns {string | undefined}
-               */
               path: string;
             }
           | {
@@ -648,6 +644,10 @@ declare class Server {
         )[];
         description: string;
         simpleType: string;
+        /**
+         * @param {Host} hostname
+         * @returns {Promise<string>}
+         */
         multiple: boolean;
       };
       http2: {
@@ -662,10 +662,6 @@ declare class Server {
         simpleType: string;
         multiple: boolean;
       };
-      /**
-       * @param {Port} port
-       * @returns {Promise<number | string>}
-       */
       https: {
         configs: {
           type: string;
@@ -685,9 +681,6 @@ declare class Server {
           description: string;
           path: string;
         }[];
-        /**
-         * @type {string | undefined}
-         */
         description: string;
         simpleType: string;
         multiple: boolean;
@@ -719,7 +712,7 @@ declare class Server {
           description: string;
           multiple: boolean;
           path: string;
-          /** @type {WebSocketURL} */ type: string;
+          type: string /** @type {WebSocketURL} */;
         }[];
         description: string;
         multiple: boolean;
@@ -733,6 +726,7 @@ declare class Server {
           path: string;
         }[];
         description: string;
+        /** @type {ServerConfiguration} */
         simpleType: string;
         multiple: boolean;
       };
@@ -846,7 +840,7 @@ declare class Server {
             }
           | {
               type: string;
-              /** @type {Object<string,string>} */ values: boolean[];
+              values: boolean[];
               multiple: boolean;
               description: string;
               path: string;
@@ -905,7 +899,7 @@ declare class Server {
           type: string;
           multiple: boolean;
           description: string;
-          path: string;
+          /** @type {MultiCompiler} */ path: string;
         }[];
         description: string;
         simpleType: string;
@@ -955,6 +949,10 @@ declare class Server {
         simpleType: string;
         multiple: boolean;
       };
+      /**
+       * @param {string | Static | undefined} [optionsForStatic]
+       * @returns {NormalizedStatic}
+       */
       "open-target-reset": {
         configs: {
           type: string;
@@ -1135,7 +1133,7 @@ declare class Server {
           negatedDescription: string;
           multiple: boolean;
           path: string;
-          type: string;
+          /** @type {ServerOptions} */ type: string;
         }[];
         description: string;
         multiple: boolean;
@@ -1147,10 +1145,10 @@ declare class Server {
           multiple: boolean;
           path: string;
           type: string;
-          values: string[];
+          /** @type {ServerOptions} */ values: string[];
         }[];
         description: string;
-        multiple: boolean;
+        /** @type {Array<keyof ServerOptions>} */ multiple: boolean;
         simpleType: string;
       };
       static: {
@@ -1170,10 +1168,14 @@ declare class Server {
             }
         )[];
         description: string;
-        simpleType: string;
+        /** @type {ServerOptions} */ simpleType: string;
         multiple: boolean;
       };
       "static-directory": {
+        /**
+         * @param {string | Buffer | undefined} item
+         * @returns {string | Buffer | undefined}
+         */
         configs: {
           type: string;
           multiple: boolean;
@@ -1295,6 +1297,7 @@ declare class Server {
         configs: (
           | {
               description: string;
+              /** @type {ServerOptions & { cacert?: ServerOptions["ca"] }} */
               multiple: boolean;
               path: string;
               type: string;
@@ -1304,11 +1307,12 @@ declare class Server {
               description: string;
               multiple: boolean;
               path: string;
-              type: string;
+              /** @type {ServerOptions} */ type: string;
             }
         )[];
         description: string;
         simpleType: string;
+        /** @type {ServerOptions} */
         multiple: boolean;
       };
     };
@@ -1875,13 +1879,17 @@ declare class Server {
                         instanceof: string;
                         /**
                          * @private
-                         * @type {RequestHandler[]}
+                         * @type {(() => RequestHandler | undefined)[]}
                          */
                         type?: undefined;
                         items?: undefined;
                       }
                   )[];
                   description: string;
+                  /**
+                   * @private
+                   * @type {string | undefined}
+                   */
                 };
                 cacert: {
                   anyOf: (
@@ -2076,6 +2084,9 @@ declare class Server {
           exclude: boolean;
         };
       };
+      /**
+       * @type {string[]}
+       */
       Headers: {
         anyOf: (
           | {
@@ -2109,18 +2120,18 @@ declare class Server {
               cli: {
                 negatedDescription: string;
               };
-              description?: undefined;
+              /** @type {WebSocketURL} */ description?: undefined;
               link?: undefined;
             }
           | {
               type: string;
-              description: string;
+              /** @type {ClientConfiguration} */ description: string;
               link: string;
               cli?: undefined /** @typedef {import("express").Request} Request */;
             }
         )[];
         description: string;
-        /** @type {string} */ link: string;
+        link: string;
       };
       Host: {
         description: string;
@@ -2154,7 +2165,7 @@ declare class Server {
             }
         )[];
         description: string;
-        link: string;
+        /** @type {string} */ link: string;
       };
       IPC: {
         anyOf: (
@@ -2313,6 +2324,7 @@ declare class Server {
               enum?: undefined;
             }
           | {
+              /** @type {any} */
               type: string;
               minLength: number;
               minimum?: undefined;
@@ -2346,7 +2358,7 @@ declare class Server {
                     }
                   | {
                       instanceof: string;
-                      /** @type {string} */ type?: undefined;
+                      type?: undefined;
                     }
                 )[];
               };
@@ -2357,7 +2369,7 @@ declare class Server {
       };
       Server: {
         anyOf: {
-          $ref: string /** @type {MultiCompiler} */;
+          $ref: string;
         }[];
         link: string;
         description: string;
@@ -2369,7 +2381,7 @@ declare class Server {
         enum: string[];
         cli: {
           exclude: boolean;
-        };
+        } /** @type {MultiCompiler} */;
       };
       ServerString: {
         type: string;
@@ -2401,6 +2413,10 @@ declare class Server {
             description: string;
           };
           requestCert: {
+            /**
+             * @private
+             * @returns {Promise<void>}
+             */
             type: string;
             description: string;
             cli: {
@@ -2790,7 +2806,7 @@ declare class Server {
         anyOf: {
           $ref: string;
         }[];
-        description: string;
+        /** @type {ServerOptions} */ description: string;
         link: string;
       };
       WebSocketServerType: {
@@ -2850,7 +2866,6 @@ declare class Server {
         $ref: string;
       };
       client: {
-        /** @type {any} */
         $ref: string;
       };
       compress: {
@@ -2987,7 +3002,7 @@ declare class Server {
   private listeners;
   /**
    * @private
-   * @type {RequestHandler[]}
+   * @type {(() => RequestHandler | undefined)[]}
    */
   private webSocketProxies;
   /**
