@@ -387,4 +387,107 @@ describe("cross-origin request check", () => {
       expect(response.headers[corpHeader]).toEqual("same-origin");
     });
   });
+
+  describe("cross-site request forgery on the '/webpack-dev-server/invalidate' endpoint", () => {
+    const endpoint = "/webpack-dev-server/invalidate";
+
+    let server;
+    let req;
+
+    beforeAll(async () => {
+      const compiler = webpack(config);
+
+      server = new Server({ port, allowedHosts: "auto" }, compiler);
+
+      await server.start();
+
+      req = request(server.app);
+    });
+
+    afterAll(async () => {
+      await server.stop();
+    });
+
+    it("should return 403 for cross-site requests", async () => {
+      const response = await req
+        .get(endpoint)
+        .set("Host", `localhost:${port}`)
+        .set("Sec-Fetch-Mode", "cors")
+        .set("Sec-Fetch-Site", "cross-site");
+
+      expect(response.status).toEqual(403);
+      expect(response.text).toEqual("Cross-Origin request blocked");
+    });
+
+    it("should return 403 for cross-site navigations", async () => {
+      const response = await req
+        .get(endpoint)
+        .set("Host", `localhost:${port}`)
+        .set("Sec-Fetch-Mode", "navigate")
+        .set("Sec-Fetch-Site", "cross-site");
+
+      expect(response.status).toEqual(403);
+      expect(response.text).toEqual("Cross-Origin request blocked");
+    });
+
+    it("should return 403 for same-site (cross-origin) requests", async () => {
+      const response = await req
+        .get(endpoint)
+        .set("Host", `localhost:${port}`)
+        .set("Origin", "http://localhost:9999")
+        .set("Sec-Fetch-Mode", "cors")
+        .set("Sec-Fetch-Site", "same-site");
+
+      expect(response.status).toEqual(403);
+      expect(response.text).toEqual("Cross-Origin request blocked");
+    });
+
+    it("should return 403 for a cross-origin 'Origin' header without 'Sec-Fetch-*' metadata", async () => {
+      const response = await req
+        .get(endpoint)
+        .set("Host", `localhost:${port}`)
+        .set("Origin", "http://evil.example");
+
+      expect(response.status).toEqual(403);
+      expect(response.text).toEqual("Cross-Origin request blocked");
+    });
+
+    it("should allow same-origin requests", async () => {
+      const response = await req
+        .get(endpoint)
+        .set("Host", `localhost:${port}`)
+        .set("Sec-Fetch-Mode", "cors")
+        .set("Sec-Fetch-Site", "same-origin");
+
+      expect(response.status).toEqual(200);
+    });
+
+    it("should allow user-initiated navigations", async () => {
+      const response = await req
+        .get(endpoint)
+        .set("Host", `localhost:${port}`)
+        .set("Sec-Fetch-Mode", "navigate")
+        .set("Sec-Fetch-Site", "none");
+
+      expect(response.status).toEqual(200);
+    });
+
+    it("should allow a same-origin 'Origin' header without 'Sec-Fetch-*' metadata", async () => {
+      const response = await req
+        .get(endpoint)
+        .set("Host", `localhost:${port}`)
+        .set("Origin", `http://localhost:${port}`);
+
+      expect(response.status).toEqual(200);
+    });
+
+    it("should allow requests without 'Sec-Fetch-*' metadata or 'Origin' (e.g. curl)", async () => {
+      const response = await req
+        .get(endpoint)
+        .set("Host", `localhost:${port}`)
+        .set("User-Agent", "curl/7.79.1");
+
+      expect(response.status).toEqual(200);
+    });
+  });
 });
