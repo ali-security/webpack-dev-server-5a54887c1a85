@@ -466,3 +466,117 @@ describe("cross-site request forgery on state-changing endpoints", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("malformed Host/Origin headers", () => {
+  const devServerPort = port1;
+
+  let server;
+
+  afterEach(async () => {
+    if (server) {
+      await server.stop();
+      // Allow the port to be fully released before the next test
+      await new Promise((resolve) => {
+        setTimeout(resolve, 100);
+      });
+      server = null;
+    }
+  });
+
+  function getMainBundleStatus() {
+    const http = require("http");
+
+    return new Promise((resolve, reject) => {
+      http
+        .get(`http://localhost:${devServerPort}/main.js`, (res) => {
+          res.resume();
+          resolve(res.statusCode);
+        })
+        .on("error", reject);
+    });
+  }
+
+  // An invalid IPv6 literal, and a soft hyphen that IDNA maps to an empty
+  // hostname (`url.parse()` throws on them on newer Node.js versions).
+  it.each(["http://[::1/", "http://­/"])(
+    "should reject a WebSocket upgrade with the malformed %p Origin header without crashing",
+    async (origin) => {
+      const WebSocket = require("ws");
+
+      const compiler = webpack(config);
+      server = new Server(
+        { port: devServerPort, allowedHosts: "auto" },
+        compiler
+      );
+
+      await server.start();
+
+      // A malformed `Origin` used to throw while being parsed and take down
+      // the whole dev-server process.
+      await new Promise((resolve) => {
+        const ws = new WebSocket(`ws://localhost:${devServerPort}/ws`, {
+          headers: {
+            host: `localhost:${devServerPort}`,
+            origin,
+          },
+        });
+        // Don't wait forever for a server that never answers
+        const timeout = setTimeout(() => {
+          ws.terminate();
+        }, 5000);
+
+        ws.on("close", () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+        ws.on("error", () => {});
+      });
+
+      // The server must still be alive: a normal request still succeeds.
+      expect(await getMainBundleStatus()).toBe(200);
+    }
+  );
+
+  it.each(["[::1", "­"])(
+    "should reject a request with the malformed %p Host header without crashing",
+    async (host) => {
+      const net = require("net");
+
+      const compiler = webpack(config);
+      server = new Server(
+        { port: devServerPort, allowedHosts: "auto" },
+        compiler
+      );
+
+      await server.start();
+
+      // A malformed `Host` sent on a plain request used to throw while being
+      // parsed. Sent over a raw socket (`latin1` keeps every character a single
+      // byte) so the malformed value reaches the server as-is.
+      const response = await new Promise((resolve) => {
+        let data = "";
+
+        const socket = net.connect(devServerPort, "localhost", () => {
+          socket.write(
+            `GET /main.js HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`,
+            "latin1"
+          );
+        });
+
+        socket.setEncoding("latin1");
+        socket.on("data", (chunk) => {
+          data += chunk;
+        });
+        socket.on("error", () => {});
+        socket.on("close", () => {
+          resolve(data);
+        });
+      });
+
+      expect(response).toContain("Invalid Host header");
+
+      // The server must still be alive: a normal request still succeeds.
+      expect(await getMainBundleStatus()).toBe(200);
+    }
+  );
+});

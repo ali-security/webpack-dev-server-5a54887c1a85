@@ -1,7 +1,10 @@
 "use strict";
 
+const net = require("net");
+const url = require("url");
 const request = require("supertest");
 const webpack = require("webpack");
+const WebSocket = require("ws");
 const Server = require("../../lib/Server");
 const config = require("../fixtures/client-config/webpack.config");
 const port = require("../ports-map")["cross-origin-request-option"];
@@ -488,6 +491,198 @@ describe("cross-origin request check", () => {
         .set("User-Agent", "curl/7.79.1");
 
       expect(response.status).toEqual(200);
+    });
+  });
+
+  // A malformed `Host` or `Origin` header value can make `url.parse()` throw,
+  // which used to take down the whole dev server process.
+  describe("malformed 'Host' and 'Origin' headers", () => {
+    // An invalid IPv6 literal, and a soft hyphen that IDNA maps to an empty
+    // hostname, both rejected by `url.parse()` on newer Node.js versions.
+    const malformedHosts = ["[::1", "­"];
+    const malformedOrigins = ["http://[::1/", "http://­/"];
+    const malformedValues = [...malformedHosts, ...malformedOrigins];
+
+    let server;
+
+    beforeAll(async () => {
+      const compiler = webpack(config);
+
+      server = new Server({ port, allowedHosts: "auto" }, compiler);
+
+      await server.start();
+    });
+
+    afterAll(async () => {
+      await server.stop();
+    });
+
+    function sendRawRequest(host) {
+      return new Promise((resolve) => {
+        let response = "";
+
+        const socket = net.connect(port, "localhost", () => {
+          // `latin1` sends every character of the malformed value as-is
+          socket.write(
+            `GET /main.js HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`,
+            "latin1"
+          );
+        });
+
+        socket.setEncoding("latin1");
+        socket.setTimeout(5000, () => {
+          socket.destroy();
+        });
+        socket.on("data", (chunk) => {
+          response += chunk;
+        });
+        socket.on("error", () => {});
+        socket.on("close", () => {
+          resolve(response);
+        });
+      });
+    }
+
+    function connectWebSocket(headers) {
+      return new Promise((resolve) => {
+        const messages = [];
+        const ws = new WebSocket(`ws://localhost:${port}/ws`, { headers });
+        // don't wait forever for a server that never answers
+        const timeout = setTimeout(() => {
+          ws.terminate();
+        }, 5000);
+
+        ws.on("message", (data) => {
+          messages.push(JSON.parse(String(data)));
+        });
+        ws.on("error", () => {});
+        ws.on("close", () => {
+          clearTimeout(timeout);
+          resolve(messages);
+        });
+      });
+    }
+
+    async function expectServerToBeAlive() {
+      const response = await request(server.server)
+        .get("/main.js")
+        .set("Host", `localhost:${port}`);
+
+      expect(response.status).toEqual(200);
+    }
+
+    describe.each([
+      ["as parsed by the current Node.js version", false],
+      ["when 'url.parse()' throws on them", true],
+    ])("%s", (_mode, simulateThrowingParse) => {
+      beforeEach(() => {
+        if (!simulateThrowingParse) {
+          return;
+        }
+
+        // Older Node.js versions parse these values into an odd hostname
+        // instead of throwing, simulate newer ones to cover the guards there.
+        const originalParse = url.parse;
+
+        jest.spyOn(url, "parse").mockImplementation((input, ...args) => {
+          if (malformedValues.includes(String(input).replace(/^\/\//, ""))) {
+            throw new TypeError(`Invalid URL: ${input}`);
+          }
+
+          return originalParse(input, ...args);
+        });
+      });
+
+      afterEach(() => {
+        jest.restoreAllMocks();
+      });
+
+      it.each(malformedHosts)(
+        "should reject the malformed %p 'Host' header without throwing",
+        (host) => {
+          const results = [
+            server.checkHeader({ host }, "host", true),
+            server.checkHeader({ host }, "host", false, false),
+            server.isSameOrigin({ host, origin: `http://localhost:${port}` }),
+          ];
+
+          expect(results).toEqual([false, false, false]);
+        }
+      );
+
+      it.each(malformedOrigins)(
+        "should reject the malformed %p 'Origin' header without throwing",
+        (origin) => {
+          const host = `localhost:${port}`;
+          const results = [
+            server.checkHeader({ origin }, "origin", false),
+            server.checkHeader({ origin }, "origin", true),
+            server.isSameOrigin({ host, origin }),
+            server.isSameOriginRequest({ headers: { host, origin } }),
+          ];
+
+          expect(results).toEqual([false, false, false, false]);
+        }
+      );
+
+      it.each(malformedHosts)(
+        "should answer a request with the malformed %p 'Host' header and keep serving",
+        async (host) => {
+          const response = await sendRawRequest(host);
+
+          expect(response).toMatch(/^HTTP\/1\.1 200 /);
+          expect(response).toContain("Invalid Host header");
+
+          await expectServerToBeAlive();
+        }
+      );
+
+      it.each(malformedOrigins)(
+        "should block the '/webpack-dev-server/invalidate' endpoint for the malformed %p 'Origin' header",
+        async (origin) => {
+          const response = await request(server.server)
+            .get("/webpack-dev-server/invalidate")
+            .set("Host", `localhost:${port}`)
+            .set("Origin", origin);
+
+          expect(response.status).toEqual(403);
+          expect(response.text).toEqual("Cross-Origin request blocked");
+
+          await expectServerToBeAlive();
+        }
+      );
+
+      it.each(malformedOrigins)(
+        "should reject a WebSocket connection with the malformed %p 'Origin' header and keep serving",
+        async (origin) => {
+          const messages = await connectWebSocket({
+            host: `localhost:${port}`,
+            origin,
+          });
+
+          expect(messages).toEqual([
+            { type: "error", data: "Invalid Host/Origin header" },
+          ]);
+
+          await expectServerToBeAlive();
+        }
+      );
+
+      it.each(malformedHosts)(
+        "should reject a WebSocket connection with the malformed %p 'Host' header and keep serving",
+        async (host) => {
+          const messages = await connectWebSocket({
+            host,
+            origin: `http://localhost:${port}`,
+          });
+
+          expect(messages).toEqual([
+            { type: "error", data: "Invalid Host/Origin header" },
+          ]);
+
+          await expectServerToBeAlive();
+        }
+      );
     });
   });
 });

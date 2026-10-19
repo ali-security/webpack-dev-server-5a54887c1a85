@@ -1,6 +1,7 @@
 "use strict";
 
 const http = require("http");
+const url = require("url");
 const request = require("supertest");
 const webpack = require("webpack");
 const WebSocket = require("ws");
@@ -271,6 +272,71 @@ describe.each(["target", "router"])(
       expect(allowed.upgraded).toBe(true);
       expect(allowed.status).toBe(101);
       expect(backendConnections).toBe(1);
+    });
+
+    // A malformed `Host` or `Origin` header value can make `url.parse()` throw,
+    // which used to take down the whole dev server process.
+    describe.each([
+      ["as parsed by the current Node.js version", false],
+      ["when 'url.parse()' throws on them", true],
+    ])("with malformed headers %s", (_mode, simulateThrowingParse) => {
+      // An invalid IPv6 literal, and a soft hyphen that IDNA maps to an empty
+      // hostname, both rejected by `url.parse()` on newer Node.js versions.
+      const malformedHosts = ["[::1", "­"];
+      const malformedOrigins = ["http://[::1/", "http://­/"];
+      const malformedValues = [...malformedHosts, ...malformedOrigins];
+
+      beforeEach(() => {
+        if (!simulateThrowingParse) {
+          return;
+        }
+
+        // Older Node.js versions parse these values into an odd hostname
+        // instead of throwing, simulate newer ones to cover the guards there.
+        const originalParse = url.parse;
+
+        jest.spyOn(url, "parse").mockImplementation((input, ...args) => {
+          if (malformedValues.includes(String(input).replace(/^\/\//, ""))) {
+            throw new TypeError(`Invalid URL: ${input}`);
+          }
+
+          return originalParse(input, ...args);
+        });
+      });
+
+      afterEach(() => {
+        jest.restoreAllMocks();
+      });
+
+      it.each(malformedOrigins)(
+        "should reject a proxied WebSocket upgrade with the malformed %p Origin header",
+        async (origin) => {
+          const result = await upgrade(origin);
+
+          expect(result.upgraded).toBe(false);
+          expect(result.status).toBe(403);
+          expect(backendConnections).toBe(0);
+
+          // The dev server must still be alive.
+          await request(server.server).get("/api/hello").expect(200);
+        }
+      );
+
+      it.each(malformedHosts)(
+        "should reject a proxied WebSocket upgrade with the malformed %p Host header",
+        async (host) => {
+          const result = await upgrade(`http://localhost:${devServerPort}`, {
+            Host: host,
+          });
+
+          expect(result.upgraded).toBe(false);
+          expect(result.status).toBe(403);
+          expect(backendConnections).toBe(0);
+
+          // The dev server must still be alive.
+          await request(server.server).get("/api/hello").expect(200);
+        }
+      );
     });
   }
 );
